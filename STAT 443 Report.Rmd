@@ -1,14 +1,20 @@
 ---
 title: "STAT 443 Report"
-author: "Chow Sheng Liang"
-date: "2025-07-26"
-output: pdf_document
+author: "Chow Sheng Liang & Eric"
+date: "2025-07-20"
+output:
+  pdf_document:
+    citation_package: natbib
+bibliography: refs.bib 
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(forecast)
 library(tseries)
+library(knitr)
+library(kableExtra)
+library(dplyr)
 ```
 
 \newpage
@@ -136,137 +142,18 @@ We will then visually validate this model by looking at its residual plot and re
 \newpage
 # Part 3
 ## Overview
-
 The goal of this simulation study is to assess the performance of two tools commonly used in time series modeling:
 
-1. **`auto.arima()`**:  
-   This function automatically selects (S)ARIMA models by minimizing information criteria such as AIC. It searches through combinations of autoregressive (AR), differencing (I), and moving average (MA) components to find the model that minimizes prediction error.
+  1. **`auto.arima()`**: Automatically selects and fits (S)ARIMA models by minimizing information criterias, aiming to recover the correct model structure and generate accurate forecasts.
+  
+  2. **`pp.test()`**: Performs the Phillips-Perron test to detect the presence of a unit root (i.e. non-stationarity).
 
-2. **`PP.test()`**:  
-   The Phillips-Perron test is a statistical procedure used to test for the presence of a unit root in an AR process (i.e., non-stationarity) against the alternative hypothesis of stationarity.
-
-These tools will be evaluated on their reliability and performance in indentifying an AR(1) process.
+These tools are evaluated on their reliability in identifying and forecasting a known stationary, non-seasonal AR(1) process with $\phi = 0.95$ and $\sigma = 0.5$, using a Monte Carlo simulation design. Forecast accuracy is assessed on a holdout test set of 20% for each realization.
 
 ## Background
-An AR(1) process, in simple terms is a process where the $t^{th}$ value depends only on the $(t-1)^{th}$ value and a i.i.d noise term. In this experiment specifically we define:
-$$X_t = 0.95X_{t-1} + Z_t \qquad \text{Where }Z_t \thicksim \mathcal{N}(0, 0.5^2)$$
-A stationary process is defined to have a **(a)finite second moment**, **(b)constant first moment**, and **(c)time-invariant auto-correlation**. The AR(1) process chosen for this experiment is stationary, a brief proof for AR(1) is provided below where our specific case has $\phi = 0.95$ and $\sigma = 0.5$.
+We consider an AR(1) process where each value depends on its immediate past and a normally distributed noise term: $X_t = 0.95X_{t-1} + Z_t$, with $Z_t \sim \mathcal{N}(0, 0.5^2)$. A stationary process' outcomes only depend on historic data, not the time sampled. Stationarity can be assessed by examining the roots of the characteristic polynomial (See [@brockwell2016stationary]); in this case, the root is 1.05 which is close to 1, this complicates detection. So although this process is technically stationary, its high dependence on the previous term makes it behave almost non-stationarily, often drifting from the mean in finite samples. We use this process to evaluate the performance of `auto.arima()` and `pp.text()` in identifying and modeling such ambitious cases.
 
-\begin{minipage}[t]{0.32\textwidth}
-\underline{(1) Finite Second Moment}\\
-
-Expand $X_t$ recursively:
-$$
-X_t = \sum_{j=0}^\infty \phi^j Z_{t-j}
-$$
-
-Since $Z_t$ i.i.d then,
-$$
-\mathbb{E}[X_t^2] = \sum_{j=0}^\infty \phi^{2j} \sigma^2 = \frac{\sigma^2}{1 - \phi^2}
-$$
-
-which is finite if $|\phi| < 1$.
-\end{minipage}
-\hfill
-\begin{minipage}[t]{0.32\textwidth}
-\underline{(2) Constant Mean}\\
-
-Take expectation:
-$$
-\mathbb{E}[X_t] = \mu_t= \phi \mu_{t-1} + \mathbb{E}[Z_t]
-$$
-
-Since $\mathbb{E}[Z_t] = 0$, then:
-$$
-\mu_t = \phi^t \mu_0
-$$
-
-The mean is constant if $\mu_0 = 0$ which is assumed in this case.
-\end{minipage}
-\hfill
-\begin{minipage}[t]{0.32\textwidth}
-\underline{(3) Time-invariant Auto-covariance}\\
-
-Let $\gamma(h) = \text{Cov}(X_t, X_{t-h})$.
-\begin{align*}
-\gamma(1) &= \text{Cov}(\phi X_{t-1} + Z_t, X_{t-1}) \\
-          &= \phi \, \text{Cov}(X_{t-1}, X_{t-1}) + 0 \\
-          &= \phi \gamma(0)
-\end{align*}
-
-By induction:
-$$
-\gamma(h) = \phi^h \gamma(0)
-$$
-
-So $\gamma$ depends only on $h$. 
-\end{minipage}
-
-\vspace{1em} 
-There exists a general solution for the stationarity of an AR process which you can read up in more detail in Brockwell and Davis. The general idea is that if we define a backward operator $B$ such that $BX_t =X_{t-1}$ then we can represent an AR process as a polynomial, with our AR process specifically being $(1+0.95B)X_t = Z_t$. The solution states that if there does not exist a complex unit root, then the process is stationary. 
-
-It is also known that the closer the roots are to the unit circle, the more non-stationary the process behaves. In our case, our root would be 1.05 which is very close to the unit circle and so when sampled its stationarity is not always clear. Intuitively this also makes sense as the process will tend to drift away from the mean as it retains such a big contribution from the previous term. All this is to say that this is a process that is potentially ambiguous and serves as a good stress test for our tools.
-
-```{r, echo=FALSE, message=FALSE, warning=FALSE}
-suppressMessages({
-  suppressWarnings({
-    library(forecast)
-    library(tseries)
-  })
-})
-```
-
-```{r, eval = FALSE}
-# Set seed for reproducibility
-set.seed(443)
-
-# Simulation function
-simulate_experiment <- function(n_sim, series_length, phi = 0.95, sigma = 0.5) {
-  pp_rejections <- logical(n_sim)
-  arima_orders <- character(n_sim)
-
-  for (i in 1:n_sim) {
-    # Simulate AR(1) series
-    e <- rnorm(series_length, mean = 0, sd = sigma)
-    x <- numeric(series_length)
-    x[1] <- rnorm(1, 0, sigma)
-    for (t in 2:series_length) {
-      x[t] <- phi * x[t - 1] + e[t]
-    }
-
-    # Phillips-Perron test
-    pp_result <- suppressWarnings(pp.test(x))
-    pp_rejections[i] <- pp_result$p.value < 0.05
-
-    # auto.arima model
-    fit <- auto.arima(x, ic = "aic", stationary = FALSE, seasonal = FALSE)
-    ord <- arimaorder(fit)
-    arima_orders[i] <- paste0("ARIMA(", ord[1], ",", ord[2], ",", ord[3], ")")
-  }
-
-  # Return results
-  list(
-    pp_reject_count = sum(pp_rejections),
-    pp_reject_rate = mean(pp_rejections),
-    arima_freq = sort(table(arima_orders), decreasing = TRUE)
-  )
-}
-
-# Run experiments
-results_long <- simulate_experiment(n_sim = 1000, series_length = 1000)
-results_short <- simulate_experiment(n_sim = 1000, series_length = 100)
-
-# Print results
-cat("=== LONG SERIES (n = 1000) ===\n")
-cat("PP Test Rejections:", results_long$pp_reject_count, "\n")
-print(results_long$arima_freq)
-
-cat("\n=== SHORT SERIES (n = 100) ===\n")
-cat("PP Test Rejections:", results_short$pp_reject_count, "\n")
-print(results_short$arima_freq)
-```
-
-```{r, eval = FALSE}
+```{r, echo=FALSE, eval=FALSE}
 get_order <- function(auto_arima_fit) {
   ord <- arimaorder(auto_arima_fit)
   
@@ -292,141 +179,389 @@ get_order <- function(auto_arima_fit) {
 }
 
 ar1_simulation_experiment <- function(n_sim = 1000, series_length = 100) {
-  # Model params
+  # Configs
+  set.seed(443)
   phi <- 0.95
   sigma <- 0.5
+  train_test_split <- 0.8
   
-  # Storage
-  pp_pvalues <- numeric(n_sim)
-  
-  arima_results <- list(
-    seasonal_true_stationary_false_stepwise_true_bic  = character(n_sim),
-    seasonal_true_stationary_false_stepwise_true_aicc  = character(n_sim),
-    seasonal_true_stationary_false_stepwise_true_aic  = character(n_sim),
-    seasonal_true_stationary_false_stepwise_false_aic = character(n_sim),
-    seasonal_false_stationary_false_stepwise_true_aic = character(n_sim),
-    seasonal_true_stationary_true_stepwise_true_aic   = character(n_sim)
+  # Define model configs (default is stationary = FALSE and seasonal = TRUE), 
+  #  Parallel is used for multi-core processing, only for exhaustive search
+  configs <- list(
+    stepwise_true_aicc  = list(ic = "aicc", stepwise = TRUE, parallel = FALSE),
+    stepwise_true_aic   = list(ic = "aic", stepwise = TRUE, parallel = FALSE),
+    stepwise_true_bic   = list(ic = "bic", stepwise = TRUE, parallel = FALSE),
+    stepwise_false_aicc = list(ic = "aicc", stepwise = FALSE, parallel = TRUE),
+    stepwise_false_aic  = list(ic = "aic", stepwise = FALSE, parallel = TRUE),
+    stepwise_false_bic  = list(ic = "bic", stepwise = FALSE, parallel = TRUE)
   )
+  config_keys <- names(configs)
   
+  # Initialize storage
+  pp_pvalues <- numeric(n_sim)
+  arima_order <- setNames(vector("list", length(config_keys)), config_keys)
+  arima_rsme  <- setNames(vector("list", length(config_keys)), config_keys)
+  for (key in config_keys) {
+    arima_order[[key]] <- character(n_sim)
+    arima_rsme[[key]] <- numeric(n_sim)
+  }
+  
+  # Simulation loop
   for (i in 1:n_sim) {
-    # Simulate AR(1)
+    # Train-test split
     x <- arima.sim(model = list(ar = phi), n = series_length, sd = sigma)
+    split_index <- floor(train_test_split * series_length)
+    x_train <- x[1:split_index]
+    x_test <- x[(split_index + 1):length(x)]
     
-    # PP Test
-    pp_pvalues[i] <- suppressWarnings(pp.test(x)$p.value)
-    
-    # auto.arima under multiple configurations
-    arima_results$seasonal_true_stationary_false_stepwise_true_bic[i] <- 
-      get_order(auto.arima(x, ic = "bic", stationary = FALSE, seasonal = TRUE, stepwise = TRUE))
-    
-    arima_results$seasonal_true_stationary_false_stepwise_true_aicc[i] <- 
-      get_order(auto.arima(x, ic = "aicc", stationary = FALSE, seasonal = TRUE, stepwise = TRUE))
-    
-    arima_results$seasonal_true_stationary_false_stepwise_true_aic[i] <- 
-      get_order(auto.arima(x, ic = "aic", stationary = FALSE, seasonal = TRUE, stepwise = TRUE))
-    
-    arima_results$seasonal_true_stationary_false_stepwise_false_aic[i] <- 
-      get_order(auto.arima(x, ic = "aic", stationary = FALSE, seasonal = TRUE, stepwise = FALSE, parallel = TRUE))
-    
-    arima_results$seasonal_false_stationary_false_stepwise_true_aic[i] <- 
-      get_order(auto.arima(x, ic = "aic", stationary = FALSE, seasonal = FALSE, stepwise = TRUE))
-    
-    arima_results$seasonal_true_stationary_true_stepwise_true_aic[i] <- 
-      get_order(auto.arima(x, ic = "aic", stationary = TRUE, seasonal = TRUE, stepwise = TRUE))
-    
+    # pp.test()
+    pp_pvalues[i] <- suppressWarnings(pp.test(x_train)$p.value)
+  
+    # auto.arima()
+    for (key in config_keys) {
+      config <- configs[[key]]
+      fit <- auto.arima(
+        x_train, ic = config$ic, stepwise = config$stepwise,
+        stationary = FALSE, seasonal = TRUE, parallel = config$parallel
+      )
+      
+      # Order
+      order_str <- get_order(fit)
+      arima_order[[key]][i] <- order_str
+      
+      # RSME
+      pred <- forecast(fit, h = length(x_test))$mean
+      arima_rsme[[key]][i] <- sqrt(mean((x_test - pred)^2))
+    }
   }
   
   return(list(
     pp_test_pvalues = pp_pvalues,
-    arima_orders = arima_results
+    arima_orders = arima_order,
+    arima_rmse = arima_rsme
   ))
 }
 
-ar1_simulation_experiment(100,100)
+sml_sample <- ar1_simulation_experiment(1000,50)
+med_sample <- ar1_simulation_experiment(1000,100)
+lg_sample <- ar1_simulation_experiment(1000,250)
+saveRDS(sml_sample, file = "ar1_sim_sml_sample.rds")
+saveRDS(med_sample, file = "ar1_sim_med_sample.rds")
+saveRDS(lg_sample, file = "ar1_sim_lg_sample.rds")
+```
+
+```{r echo=FALSE}
+summarize_results <- function(sim_result) {
+  # Config
+  true_order <- "ARIMA(1,0,0)"
+
+  # Extract
+  order <- sim_result$arima_orders
+  rmse <- sim_result$arima_rmse
+  pval <- sim_result$pp_test_pvalues
+  
+  # Set lists
+  criterion <- c("AICc", "AIC", "BIC", "AICc", "AIC", "BIC")
+  search_strat <- c("Stepwise", "Stepwise", "Stepwise", "Exhaustive", "Exhaustive", "Exhaustive")
+  accuracy <- c(mean(order[["stepwise_true_aicc"]] == true_order),
+                 mean(order[["stepwise_true_aic"]] == true_order),
+                 mean(order[["stepwise_true_bic"]] == true_order),
+                 mean(order[["stepwise_false_aicc"]] == true_order),
+                 mean(order[["stepwise_false_aic"]] == true_order),
+                 mean(order[["stepwise_false_bic"]] == true_order))
+  avg_rmse <- c(round(mean(rmse[["stepwise_true_aicc"]]), 3),
+                 round(mean(rmse[["stepwise_true_aic"]]), 3),
+                 round(mean(rmse[["stepwise_true_bic"]]), 3),
+                 round(mean(rmse[["stepwise_false_aicc"]]), 3),
+                 round(mean(rmse[["stepwise_false_aic"]]), 3),
+                 round(mean(rmse[["stepwise_false_bic"]]), 3))
+
+  # Data frame for auto.arima results
+  auto_arima_summary <- data.frame(
+    Criterion = criterion,
+    Search_Strat = search_strat,
+    Accuracy = accuracy,
+    RMSE = avg_rmse,
+    stringsAsFactors = FALSE
+  )
+
+  # Data frame for pp.test summary
+  pp_summary <- data.frame(
+    Accuracy = round(mean(pval < 0.05), 3)
+  )
+
+  return(list(auto_arima = auto_arima_summary, pp_test = pp_summary))
+}
+
+sml_sample <- readRDS("ar1_sim_sml_sample.rds")
+med_sample <- readRDS("ar1_sim_med_sample.rds")
+lg_sample <- readRDS("ar1_sim_lg_sample.rds")
+
+sml_summary <- summarize_results(sml_sample)
+med_summary <- summarize_results(med_sample)
+lg_summary <- summarize_results(lg_sample)
+```
+
+
+## Design
+To best reflect real-world scenarios where users may not know whether a series is stationary or seasonal, we purposefully do not restrict the model search space in `auto.arima()` by setting:
+
+- `stationary = FALSE` (allow but not forcing differencing)
+
+- `seasonal = TRUE` (allow but not forcing seasonal terms)
+
+to explore how robust the model selection is under loose assumptions.
+
+We investigate how performance varies across three axis:
+
+- Information criteria: AIC, AICc, and BIC
+
+- Search strategies: stepwise vs exhaustive
+
+- Series lengths: 50, 100, and 250 observations
+
+### Evaluation Metrics
+
+Our evaluation uses two metrics averaged over 1000 simulations:
+
+- Model identification accuracy:
+
+  - `auto.arima()`: proportion of simulations where the correct ARIMA order (1,0,0) is selected
+  
+  - `pp.test()`: proportion of correct stationarity classifications (rejecting unit root, $p \leq 0.05$)
+  
+- Forecasting accuracy (for `auto.arima()` only):
+
+  - Root Mean Square Error (RMSE) on the test set (20% of each realization)
+
+\newpage
+## Results
+
+```{r, echo=FALSE, results='asis', message=FALSE}
+library(kableExtra)
+library(dplyr)
+
+# Prepare base tables with renamed columns
+sml <- sml_summary$auto_arima %>%
+  rename(`50_Accuracy` = Accuracy, `50_RMSE` = RMSE)
+
+med <- med_summary$auto_arima %>%
+  rename(`100_Accuracy` = Accuracy, `100_RMSE` = RMSE)
+
+lg <- lg_summary$auto_arima %>%
+  rename(`250_Accuracy` = Accuracy, `250_RMSE` = RMSE)
+
+# Join all by Criterion + Search_Strat
+wide_tbl <- sml %>%
+  select(Criterion, Search_Strat, `50_Accuracy`, `50_RMSE`) %>%
+  left_join(med %>% select(Criterion, Search_Strat, `100_Accuracy`, `100_RMSE`),
+            by = c("Criterion", "Search_Strat")) %>%
+  left_join(lg %>% select(Criterion, Search_Strat, `250_Accuracy`, `250_RMSE`),
+            by = c("Criterion", "Search_Strat"))
+
+wide_tbl_display <- wide_tbl %>% select(-Search_Strat)
+
+kbl(wide_tbl_display, format = "latex", booktabs = TRUE,
+    caption = "auto.arima() Performance Grouped by Series Length and Search Strategy") %>%
+  kable_styling(latex_options = c("striped", "hold_position")) %>%
+  add_header_above(c(" " = 1,
+                     "Series Length = 50" = 2,
+                     "Series Length = 100" = 2,
+                     "Series Length = 250" = 2)) %>%
+  # Simulate vertical dividers between group blocks
+  column_spec(3, border_right = TRUE) %>%  # After 50_RMSE
+  column_spec(5, border_right = TRUE) %>%  # After 100_RMSE
+  pack_rows("Stepwise", 1, 3) %>%
+  pack_rows("Exhaustive", 4, 6)
+```
+
+```{r echo=FALSE,results='asis', message=FALSE}
+
+# Build table
+pp_tbl <- data.frame(
+  `Series Length` = c(50, 100, 250),
+  `Accuracy (Reject H0)` = c(sml_summary$pp_test$Accuracy,
+                             med_summary$pp_test$Accuracy,
+                             lg_summary$pp_test$Accuracy)
+)
+
+colnames(pp_tbl) <- c("Series Length", "PP Accuracy")
+
+# Render
+kbl(pp_tbl, format = "latex", booktabs = TRUE,
+    caption = "pp.test() Performance across Series Lengths",
+    align = c("c", "c", "c")) %>%
+  kable_styling(latex_options = c("hold_position", "striped"))
+```
+
+## Analysis
+
+The performance of `auto.arima()` in identifying the correct model order is generally underwhelming coming in at ~20%, which is not entirely unexpected given the inherent difficulty of the task. Among the information criteria, AICc consistently outperforms AIC in both order identification and forecast accuracy, which aligns with expectations due to AICc’s robustness in accounting for smaller samples.
+
+Surprisingly, exhaustive search performs worse than stepwise search across all metrics. This contradicts the intuition that a global optimal would yield better results, and may suggest potential overfitting on a large search space or some inefficiency within the exhaustive search algorithm. Even more unexpectedly, `auto.arima()` did not improve in identification accuracy as the sample size increases, this is unlikely to be due to random chance as we ran 1000 simulations. 
+
+BIC emerges as the strongest criterion overall, outperforming AIC and AICc in both identification and forecast accuracy across both search strategies. Despite differences in order accuracy, RMSE appears similar across all criteria and search strategies as the series length increases, suggesting a convergence effect in forecast error that is not reflected in model selection accuracy.
+
+For unit root testing, the `pp.test()` improves with longer series, which is consistent with the statistical theory it is based on(SLLN).
+
+In conclusion, several counter-intuitive results were observed, such as exhaustive search under-performing and order accuracy not improving while forecast accuracy becomes more stable with more data. Future work could investigate why RMSE stabilizes even when model identification does not improve, and whether using `auto.arima()` for model selection but deferring to `pp.test()` to validate differencing(if any) can yield better overall performance.
+
+\newpage
+## Part 4
+```{r, eval=FALSE}
+# Deals with weird auto.arima() object
+get_order <- function(auto_arima_fit) {
+  ord <- arimaorder(auto_arima_fit)
+  
+  safe_index <- function(vec, i) {
+    if (i <= length(vec)) vec[i] else 0
+  }
+  
+  p <- safe_index(ord, 1)
+  d <- safe_index(ord, 2)
+  q <- safe_index(ord, 3)
+  P <- safe_index(ord, 4)
+  D <- safe_index(ord, 5)
+  Q <- safe_index(ord, 6)
+  s <- safe_index(ord, 7)
+
+  # Check if there is any seasonal component
+  if (P != 0 || D != 0 || Q != 0) {
+    return(paste0("ARIMA(", p, ",", d, ",", q, ")(", P, ",", D, ",", Q, ")[", s, "]"))
+  } else {
+    return(paste0("ARIMA(", p, ",", d, ",", q, ")"))
+  }
+}
+
+ar1_simulation_experiment <- function(n_sim = 1000, series_length = 100) {
+  # Configs
+  set.seed(443)
+  phi <- 0.95
+  sigma <- 0.5
+  train_test_split <- 0.8
+  
+  # Define model configs (default is stationary = FALSE and seasonal = TRUE), 
+  #  Parallel is used for multi-core processing, only for exhaustive search
+  configs <- list(
+    stepwise_true_aicc  = list(ic = "aicc", stepwise = TRUE, parallel = FALSE),
+    stepwise_true_aic   = list(ic = "aic", stepwise = TRUE, parallel = FALSE),
+    stepwise_true_bic   = list(ic = "bic", stepwise = TRUE, parallel = FALSE),
+    stepwise_false_aicc = list(ic = "aicc", stepwise = FALSE, parallel = TRUE),
+    stepwise_false_aic  = list(ic = "aic", stepwise = FALSE, parallel = TRUE),
+    stepwise_false_bic  = list(ic = "bic", stepwise = FALSE, parallel = TRUE)
+  )
+  config_keys <- names(configs)
+  
+  # Initialize storage
+  pp_pvalues <- numeric(n_sim)
+  arima_order <- setNames(vector("list", length(config_keys)), config_keys)
+  arima_rsme  <- setNames(vector("list", length(config_keys)), config_keys)
+  for (key in config_keys) {
+    arima_order[[key]] <- character(n_sim)
+    arima_rsme[[key]] <- numeric(n_sim)
+  }
+  
+  # Simulation loop
+  for (i in 1:n_sim) {
+    # Train-test split
+    x <- arima.sim(model = list(ar = phi), n = series_length, sd = sigma)
+    split_index <- floor(train_test_split * series_length)
+    x_train <- x[1:split_index]
+    x_test <- x[(split_index + 1):length(x)]
+    
+    # pp.test()
+    pp_pvalues[i] <- suppressWarnings(pp.test(x_train)$p.value)
+  
+    # auto.arima()
+    for (key in config_keys) {
+      config <- configs[[key]]
+      fit <- auto.arima(
+        x_train, ic = config$ic, stepwise = config$stepwise,
+        stationary = FALSE, seasonal = TRUE, parallel = config$parallel
+      )
+      
+      # Order
+      arima_order[[key]][i] <- get_order(fit)
+      
+      # RSME
+      pred <- forecast(fit, h = length(x_test))$mean
+      arima_rsme[[key]][i] <- sqrt(mean((x_test - pred)^2))
+    }
+  }
+  
+  return(list(
+    pp_test_pvalues = pp_pvalues,
+    arima_orders = arima_order,
+    arima_rmse = arima_rsme
+  ))
+}
+
+sml_sample <- ar1_simulation_experiment(1000,50)
+med_sample <- ar1_simulation_experiment(1000,100)
+lg_sample <- ar1_simulation_experiment(1000,250)
+saveRDS(sml_sample, file = "ar1_sim_sml_sample.rds")
+saveRDS(med_sample, file = "ar1_sim_med_sample.rds")
+saveRDS(lg_sample, file = "ar1_sim_lg_sample.rds")
+```
+
+```{r, eval=FALSE}
+summarize_results <- function(sim_result) {
+  # Config
+  true_order <- "ARIMA(1,0,0)"
+
+  # Extract
+  order <- sim_result$arima_orders
+  rmse <- sim_result$arima_rmse
+  pval <- sim_result$pp_test_pvalues
+  
+  # Set lists
+  criterion <- c("AICc", "AIC", "BIC", "AICc", "AIC", "BIC")
+  search_strat <- c("Stepwise", "Stepwise", "Stepwise", "Exhaustive", "Exhaustive", "Exhaustive")
+  accuracy <- c(mean(order[["stepwise_true_aicc"]] == true_order),
+                 mean(order[["stepwise_true_aic"]] == true_order),
+                 mean(order[["stepwise_true_bic"]] == true_order),
+                 mean(order[["stepwise_false_aicc"]] == true_order),
+                 mean(order[["stepwise_false_aic"]] == true_order),
+                 mean(order[["stepwise_false_bic"]] == true_order))
+  avg_rmse <- c(round(mean(rmse[["stepwise_true_aicc"]]), 3),
+                 round(mean(rmse[["stepwise_true_aic"]]), 3),
+                 round(mean(rmse[["stepwise_true_bic"]]), 3),
+                 round(mean(rmse[["stepwise_false_aicc"]]), 3),
+                 round(mean(rmse[["stepwise_false_aic"]]), 3),
+                 round(mean(rmse[["stepwise_false_bic"]]), 3))
+
+  # Data frame for auto.arima summary
+  auto_arima_summary <- data.frame(
+    Criterion = criterion,
+    Search_Strat = search_strat,
+    Accuracy = accuracy,
+    RMSE = avg_rmse,
+    stringsAsFactors = FALSE
+  )
+
+  # Data frame for pp.test summary
+  pp_summary <- data.frame(
+    Accuracy = round(mean(pval < 0.05), 3)
+  )
+
+  return(list(auto_arima = auto_arima_summary, pp_test = pp_summary))
+}
+
+sml_sample <- readRDS("ar1_sim_sml_sample.rds")
+med_sample <- readRDS("ar1_sim_med_sample.rds")
+lg_sample <- readRDS("ar1_sim_lg_sample.rds")
+
+sml_summary <- summarize_results(sml_sample)
+med_summary <- summarize_results(med_sample)
+lg_summary <- summarize_results(lg_sample)
 ```
 
 \newpage
 
-## Design
-We will conduct a Monte Carlo simulation study using a known AR(1) process to evaluate the behavior of two tools:
+# Part 5
 
-1. **`auto.arima()`**: for identifying the correct model structure and generating accurate forecasts(80:20 train-test).
-	
-2. **`pp.test()`**: for testing the presence of a unit root.
+### Generative AI tools were used solely for minor clarity improvements and resolving code syntax or type-related issues. All research, design decisions, and written content are original, and have been carefully reviewed and verified.
 
-Since the true data-generating process is stationary and non-seasonal (ARIMA(1,0,0)), this setup allows us to directly assess both:
+A lot of the theory is from [@marriott2025stat443], and we used [@r2024usaccdeaths] as an example dataset.
 
-- The accuracy of model order identification, and
-
-- The quality of forecasts generated under different modeling assumptions.
-
-The central goal is to assess how well different configurations of `auto.arima()` perform when it is allowed to consider incorrect components (e.g., seasonal terms or unnecessary differencing), as well as to access `pp.test()`'s ability to detect unit roots when the true root is close to 1. This reflects real-world use cases where users may not be able to confidently assume stationarity or non-seasonality.
-
-Thus, for all of out experiments we will set `stationary = FALSE` and `seasonal = TRUE` which does not force auto.arima() to compensate for it, but just includes it in its search space to investigate the effects of:
-
-- Information criteria: AIC, AICc, and BIC 
-
-- Search strategies: stepwise vs exhaustive
-
-- Series length: 50, 100, and 250
-
-Together, these tests will allow us to examine how resilient each configuration is to loose assumptions and how they behave under different sample sizes.
-
-To assess the performance of the PP-test and the auto arima function, we evaluated
-the performance of the functions in identifying stationarity and model structure
-from the known AR(1) process:
-$$X_t = 0.95X_{t-1} + \epsilon_t, \epsilon_t \thicksim \mathcal{N}(0, 0.5^2)$$
-As we have shown the process is stationary in theory but exhibits non-stationary
-properties in short intervals due to the high value of $\phi = 0.95$. We compared
-results for: 
-A long series with 1000 realizations of length 1000 and a 
-shorter length series with 1000 realizations of length 100.
-
-The auto.arima() function
-was allowed to select from the full class of ARIMA models, including those that 
-apply differencing. Although we know our simulated data is stationary, in
-real-world applications the true model is unknown. As such, we set stationary = 
-FALSE to reflect a more realistic setting where the algorithm must determine 
-whether differencing is needed.
-
-The PP test examines the null hypothesis that the series has a unit root 
-(i.e., is non-stationary). Therefore, rejecting the null supports the conclusion 
-that the series is stationary.
-
-In the long series (length = 1000), the PP test correctly concluded the
-data was stationary in all 1000 simulations.
-
-In the shorter series (length = 100), the PP test only correctly rejected
-the null hypothesis in only 119 out of 1000 simulations. In the remaining 881 cases,
-the test failed to detect stationarity, indicating that short series may mislead 
-formal statistical tests, such as the PP test in this case.
-
-The auto.arima() funciton selects ARIMA models based on AIC. Ideally it should frequently
-select the ARIMA(1,0,0) model which is the true model.
-
-In the long series, the most frequent model selections were ARIMA(0,1,0): 369 times, 
-ARIMA(1,0,0) 243 times, and the third most frequent ARIMA(0, 1, 1) only 40 times.
-
-In the shorter series the ARIMA(0, 1, 0) model was selected 676 times and
-the ARIMA(1,0,0) was only selected 158 times
-
-These results show that both the Phillips-Perron test can struggle
-with processes with high autocorrelation ($\phi \approx 1$), especially when sample
-sizes are small. We see this as the shorter length simulations only had the PP test
-correctly reject the hypothesis/ detect stationarity around 12% of the time.
-These results conclude that the PP-test has low power to detect stationarity 
-in short samples, particularly when autocorrelation is high, leading to many 
-false conclusions of non-stationarity within time series.
-
-The auto.arima() tends to favour differenced or unnecessarily complex models 
-when the process has a high autocorrelation (phi close to 1, in this case 0.95) 
-even in the samples with longer length as the most selected model was the ARIMA(0,1,0).
-This shows model selection via AIC can be unstable in small samples, often choosing 
-unnecessarily complex ARIMA models that do not reflect the true generating process.
-
-Overall, the results demonstrate the importance of dataset length and the 
-limitations of relying solely on automated statistical tests. When working with 
-time series that exhibit strong autocorrelation, analysts must be cautious as 
-short-term behavior may mimic non-stationarity and lead to incorrect model 
-identification or hypothesis test results. Visual inspection, diagnostic tools,
-and theoretical understanding should be used together to avoid these misunderstandings.
+# References
