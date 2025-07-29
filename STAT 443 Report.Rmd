@@ -8,6 +8,7 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(forecast)
+library(tseries)
 ```
 
 \newpage
@@ -144,10 +145,10 @@ The goal of this simulation study is to assess the performance of two tools comm
 2. **`PP.test()`**:  
    The Phillips-Perron test is a statistical procedure used to test for the presence of a unit root in an AR process (i.e., non-stationarity) against the alternative hypothesis of stationarity.
 
-These tools will be evaluated under different simulated time series conditions to understand their reliability and performance.
+These tools will be evaluated on their reliability and performance in indentifying an AR(1) process.
 
 ## Background
-We will be simulating data from an AR(1) process, which in simple terms is a process where the $t^{th}$ value depends only on the $(t-1)^{th}$ value and a i.i.d noise term. In this experiment specifically we define:
+An AR(1) process, in simple terms is a process where the $t^{th}$ value depends only on the $(t-1)^{th}$ value and a i.i.d noise term. In this experiment specifically we define:
 $$X_t = 0.95X_{t-1} + Z_t \qquad \text{Where }Z_t \thicksim \mathcal{N}(0, 0.5^2)$$
 A stationary process is defined to have a **(a)finite second moment**, **(b)constant first moment**, and **(c)time-invariant auto-correlation**. The AR(1) process chosen for this experiment is stationary, a brief proof for AR(1) is provided below where our specific case has $\phi = 0.95$ and $\sigma = 0.5$.
 
@@ -206,13 +207,6 @@ There exists a general solution for the stationarity of an AR process which you 
 
 It is also known that the closer the roots are to the unit circle, the more non-stationary the process behaves. In our case, our root would be 1.05 which is very close to the unit circle and so when sampled its stationarity is not always clear. Intuitively this also makes sense as the process will tend to drift away from the mean as it retains such a big contribution from the previous term. All this is to say that this is a process that is potentially ambiguous and serves as a good stress test for our tools.
 
-This gives motivation towards the logic and design of our experiment. We will compare the
-performance of the Phillips-Perron test across a high number of realizations of 
-simulated data with a large length, and then because we know the AR(1) can 
-appear non-stationary in shorter time intervals, we will test across another 1000 
-realizations of simulated data to emphasize the importance of dataset size in the 
-result of applying these tools (PP test and auto arima). \newpage
-
 ```{r, echo=FALSE, message=FALSE, warning=FALSE}
 suppressMessages({
   suppressWarnings({
@@ -222,7 +216,7 @@ suppressMessages({
 })
 ```
 
-```{echo=TRUE}
+```{r, eval = FALSE}
 # Set seed for reproducibility
 set.seed(443)
 
@@ -271,7 +265,113 @@ cat("\n=== SHORT SERIES (n = 100) ===\n")
 cat("PP Test Rejections:", results_short$pp_reject_count, "\n")
 print(results_short$arima_freq)
 ```
+
+```{r, eval = FALSE}
+get_order <- function(auto_arima_fit) {
+  ord <- arimaorder(auto_arima_fit)
+  
+  # Safe access with default = 0 for seasonal orders and 1 for period
+  safe_index <- function(vec, i, default = 0) {
+    if (i <= length(vec)) vec[i] else default
+  }
+  
+  p <- safe_index(ord, 1)
+  d <- safe_index(ord, 2)
+  q <- safe_index(ord, 3)
+  P <- safe_index(ord, 4)
+  D <- safe_index(ord, 5)
+  Q <- safe_index(ord, 6)
+  s <- safe_index(ord, 7, default = 1)
+
+  # Check if there is any seasonal component
+  if (P != 0 || D != 0 || Q != 0) {
+    return(paste0("ARIMA(", p, ",", d, ",", q, ")(", P, ",", D, ",", Q, ")[", s, "]"))
+  } else {
+    return(paste0("ARIMA(", p, ",", d, ",", q, ")"))
+  }
+}
+
+ar1_simulation_experiment <- function(n_sim = 1000, series_length = 100) {
+  # Model params
+  phi <- 0.95
+  sigma <- 0.5
+  
+  # Storage
+  pp_pvalues <- numeric(n_sim)
+  
+  arima_results <- list(
+    seasonal_true_stationary_false_stepwise_true_bic  = character(n_sim),
+    seasonal_true_stationary_false_stepwise_true_aicc  = character(n_sim),
+    seasonal_true_stationary_false_stepwise_true_aic  = character(n_sim),
+    seasonal_true_stationary_false_stepwise_false_aic = character(n_sim),
+    seasonal_false_stationary_false_stepwise_true_aic = character(n_sim),
+    seasonal_true_stationary_true_stepwise_true_aic   = character(n_sim)
+  )
+  
+  for (i in 1:n_sim) {
+    # Simulate AR(1)
+    x <- arima.sim(model = list(ar = phi), n = series_length, sd = sigma)
+    
+    # PP Test
+    pp_pvalues[i] <- suppressWarnings(pp.test(x)$p.value)
+    
+    # auto.arima under multiple configurations
+    arima_results$seasonal_true_stationary_false_stepwise_true_bic[i] <- 
+      get_order(auto.arima(x, ic = "bic", stationary = FALSE, seasonal = TRUE, stepwise = TRUE))
+    
+    arima_results$seasonal_true_stationary_false_stepwise_true_aicc[i] <- 
+      get_order(auto.arima(x, ic = "aicc", stationary = FALSE, seasonal = TRUE, stepwise = TRUE))
+    
+    arima_results$seasonal_true_stationary_false_stepwise_true_aic[i] <- 
+      get_order(auto.arima(x, ic = "aic", stationary = FALSE, seasonal = TRUE, stepwise = TRUE))
+    
+    arima_results$seasonal_true_stationary_false_stepwise_false_aic[i] <- 
+      get_order(auto.arima(x, ic = "aic", stationary = FALSE, seasonal = TRUE, stepwise = FALSE, parallel = TRUE))
+    
+    arima_results$seasonal_false_stationary_false_stepwise_true_aic[i] <- 
+      get_order(auto.arima(x, ic = "aic", stationary = FALSE, seasonal = FALSE, stepwise = TRUE))
+    
+    arima_results$seasonal_true_stationary_true_stepwise_true_aic[i] <- 
+      get_order(auto.arima(x, ic = "aic", stationary = TRUE, seasonal = TRUE, stepwise = TRUE))
+    
+  }
+  
+  return(list(
+    pp_test_pvalues = pp_pvalues,
+    arima_orders = arima_results
+  ))
+}
+
+ar1_simulation_experiment(100,100)
+```
+
 \newpage
+
+## Design
+We will conduct a Monte Carlo simulation study using a known AR(1) process to evaluate the behavior of two tools:
+
+1. **`auto.arima()`**: for identifying the correct model structure and generating accurate forecasts(80:20 train-test).
+	
+2. **`pp.test()`**: for testing the presence of a unit root.
+
+Since the true data-generating process is stationary and non-seasonal (ARIMA(1,0,0)), this setup allows us to directly assess both:
+
+- The accuracy of model order identification, and
+
+- The quality of forecasts generated under different modeling assumptions.
+
+The central goal is to assess how well different configurations of `auto.arima()` perform when it is allowed to consider incorrect components (e.g., seasonal terms or unnecessary differencing), as well as to access `pp.test()`'s ability to detect unit roots when the true root is close to 1. This reflects real-world use cases where users may not be able to confidently assume stationarity or non-seasonality.
+
+Thus, for all of out experiments we will set `stationary = FALSE` and `seasonal = TRUE` which does not force auto.arima() to compensate for it, but just includes it in its search space to investigate the effects of:
+
+- Information criteria: AIC, AICc, and BIC 
+
+- Search strategies: stepwise vs exhaustive
+
+- Series length: 50, 100, and 250
+
+Together, these tests will allow us to examine how resilient each configuration is to loose assumptions and how they behave under different sample sizes.
+
 To assess the performance of the PP-test and the auto arima function, we evaluated
 the performance of the functions in identifying stationarity and model structure
 from the known AR(1) process:
