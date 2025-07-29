@@ -12,7 +12,7 @@ library(forecast)
 
 \newpage
 
-## Part 1
+# Part 1
 
 A fundamental part of forecasting is understanding how a variable relates to its own past, this is because most real-world processes are not memoryless. For example, daily temperature tends to evolve smoothly over time, electricity demand shows strong daily and weekly cycles, and stock market volatility clusters over consecutive days.
 
@@ -69,7 +69,7 @@ So in summary, just as linearity is crucial for linear regression, stationarity 
 
 \newpage
 
-## Part 2
+# Part 2
 
 ```{r, fig.width = 8, fig.height = 4, fig.cap = "Panel (a) shows long term forecasts using an AR(1) model. Panel (b) shows long term forecasts using an ARIMA(0, 1, 0) model."}
 project_data <- readRDS("projectdata.rds")
@@ -128,52 +128,83 @@ Through the Box-Jenkins methodology, we would first examine the time-series plot
 
 If we see a clear trend from the time-series plot or if the Phillips-Perron test suggests non-stationarity we may consider differencing it and re-evaluating. If we see a seasonal trend in the ACF(i.e. ACF spikes at regular periods) we may consider differencing with a lag that matches the period and re-evaluating. 
 
-Once the process is stationary, Box-Jenkins requires us to identify the model by fitting an appropriate order and validating with a criterion, then reiterating until the one with the best metric is found. However this entire process can be much easily done with auto.arima() through numerical evaluation. We can optionally provide auto.arima() with a ceiling for its search to optimize speed, auto.arima() will then automate the identification process by iteratively minimizing AIC across the possible (p,d,q)(P,D,Q) combinations with options to include/exclude the seasonal components as well as options to exhaustively search all permutations or do a stepwise search. 
+Once the process is stationary, Box-Jenkins requires us to identify the model by fitting an appropriate order and validating with a criterion, then reiterating until the one with the best metric is found. However this entire process can be much easily done with `auto.arima()` through numerical evaluation. We can optionally provide `auto.arima()` with a ceiling for its search to optimize speed, `auto.arima()` will then automate the identification process by iteratively minimizing AIC across the possible `(p,d,q)(P,D,Q)` combinations with options to include/exclude the seasonal components as well as options to exhaustively search all permutations or do a stepwise search. 
 
-We will then visually validate this model by looking at it residual plot and residual ACF plot which we should expect to see evidence of a white noise process. If the residuals suggests otherwise, we should go back to step 1 and re-evaluate our model selection, and maybe even consider completely different models like ARCH, GARCH or simpler linear models like Holt-Winters.
+We will then visually validate this model by looking at its residual plot and residual ACF plot which we should expect to see evidence of a white noise process. If the residuals suggests otherwise, we should go back to step 1 and re-evaluate our model selection, and maybe even consider completely different models like ARCH, GARCH or simpler linear models like Holt-Winters.
 
 \newpage
-The goal of this simulation study is to assess the performance of 2 tools used in
-time series modeling:
+# Part 3
+## Overview
 
-The first tool is the auto.arima() function, which automatically selects ARIMA 
-models based on information criteria such as AIC. It tries combinations of
-autoreggressive (AR), differencing(I), and moving average (MA) components to
-minimize prediction error. 
+The goal of this simulation study is to assess the performance of two tools commonly used in time series modeling:
 
-The second tool is the PP.test() function, which is a statistical test which tests
-for a unit root (non-stationary) against a stationary alternative.
+1. **`auto.arima()`**:  
+   This function automatically selects (S)ARIMA models by minimizing information criteria such as AIC. It searches through combinations of autoregressive (AR), differencing (I), and moving average (MA) components to find the model that minimizes prediction error.
 
-We simulate data from a stationary AR(1) , which is a simple autoreggressive 
-process where the current value depends on its immediate past value. In our case
-our model is:
-$$X_t = 0.95X_{t-1} + \epsilon_t, \epsilon_t \thicksim \mathcal{N}(0, 0.5^2)$$
-With $\phi = 0.95$, this model retains a strong memory of past values, meaning the
-series evolves slowly and appears to drift over short periods, even though it is
-theoretically stationary.
-We can show this model is stationary if it satisfies that we have a finite second
-moment, a constant mean, and we have a time-invariant auto-covariance function. 
-By definition, and for h > 0: $$ \gamma(h) = Cov(X_t, X_{t-h}) = Cov(\phi X_{t-1} 
- + Z_t, X_{t-h}) = \phi Cov(X_{t-1},X_{t-h}) + Cov(Z_t, X_{t-h}) = \phi \gamma (h-1) + 0$$
-and iterating this argument gives us an auto-covariance function 
-$\gamma(h) = \phi^h\gamma(0)$. From this we can see if we have a finite second moment/variance if we evaluate $\gamma(0) = Cov(X_t,X_t) = Var(X_t)$ so:
-$$ \gamma(0) = Cov(\phi X_{t-1} + Z_t, \phi X_{t-1} + Z_t) = \phi ^2\gamma(0) + \sigma^2$$
-and rearranging gives us: $$Var(X_t) = \mathop{\mathbb{E}}(|X_t|^2) = \gamma (0) = \frac{\sigma^2}{1-\phi^2}$$
+2. **`PP.test()`**:  
+   The Phillips-Perron test is a statistical procedure used to test for the presence of a unit root in an AR process (i.e., non-stationarity) against the alternative hypothesis of stationarity.
 
-So we have seen that it satisfies the second and third condition for finite second
-moment and a time-invariant auto-covariance function. Now we will show it has a 
-constant mean: $$ \mathop{\mathbb{E}}(X_t) = \mathop{\mathbb{E}}(\phi X_{t-1}) + \mathop{\mathbb{E}}(Z_t)
-= \phi \mathop{\mathbb{E}}(X_{t-1}) + 0 = \phi ^ t\mathop{\mathbb{E}}(X_0)$$ and
-this would imply for every $X_t$ the expected value is 0.
+These tools will be evaluated under different simulated time series conditions to understand their reliability and performance.
 
-Although the AR(1) process with $\phi = 0.95$ is theoretically stationary, its values
-change slowly over time and can appear to drift or follow a trend in one direction
-over short intervals of time. This is because the autocorrelation decays very slowly,
-making the time series look similar to a non-stationary process. 
+## Background
+We will be simulating data from an AR(1) process, which in simple terms is a process where the $t^{th}$ value depends only on the $(t-1)^{th}$ value and a i.i.d noise term. In this experiment specifically we define:
+$$X_t = 0.95X_{t-1} + Z_t \qquad \text{Where }Z_t \thicksim \mathcal{N}(0, 0.5^2)$$
+A stationary process is defined to have a **(a)finite second moment**, **(b)constant first moment**, and **(c)time-invariant auto-correlation**. The AR(1) process chosen for this experiment is stationary, a brief proof for AR(1) is provided below where our specific case has $\phi = 0.95$ and $\sigma = 0.5$.
 
-This slow decay of correlation can mislead both visual inspection and statistical tests.
-For example, the Phillips-Perron test may not have enough evidence to correctly 
-reject the null hypothesis of a unit root in these cases. 
+\begin{minipage}[t]{0.32\textwidth}
+\underline{(1) Finite Second Moment}\\
+
+Expand $X_t$ recursively:
+$$
+X_t = \sum_{j=0}^\infty \phi^j Z_{t-j}
+$$
+
+Since $Z_t$ i.i.d then,
+$$
+\mathbb{E}[X_t^2] = \sum_{j=0}^\infty \phi^{2j} \sigma^2 = \frac{\sigma^2}{1 - \phi^2}
+$$
+
+which is finite if $|\phi| < 1$.
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.32\textwidth}
+\underline{(2) Constant Mean}\\
+
+Take expectation:
+$$
+\mathbb{E}[X_t] = \mu_t= \phi \mu_{t-1} + \mathbb{E}[Z_t]
+$$
+
+Since $\mathbb{E}[Z_t] = 0$, then:
+$$
+\mu_t = \phi^t \mu_0
+$$
+
+The mean is constant if $\mu_0 = 0$ which is assumed in this case.
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.32\textwidth}
+\underline{(3) Time-invariant Auto-covariance}\\
+
+Let $\gamma(h) = \text{Cov}(X_t, X_{t-h})$.
+\begin{align*}
+\gamma(1) &= \text{Cov}(\phi X_{t-1} + Z_t, X_{t-1}) \\
+          &= \phi \, \text{Cov}(X_{t-1}, X_{t-1}) + 0 \\
+          &= \phi \gamma(0)
+\end{align*}
+
+By induction:
+$$
+\gamma(h) = \phi^h \gamma(0)
+$$
+
+So $\gamma$ depends only on $h$. 
+\end{minipage}
+
+\vspace{1em} 
+There exists a general solution for the stationarity of an AR process which you can read up in more detail in Brockwell and Davis. The general idea is that if we define a backward operator $B$ such that $BX_t =X_{t-1}$ then we can represent an AR process as a polynomial, with our AR process specifically being $(1+0.95B)X_t = Z_t$. The solution states that if there does not exist a complex unit root, then the process is stationary. 
+
+It is also known that the closer the roots are to the unit circle, the more non-stationary the process behaves. In our case, our root would be 1.05 which is very close to the unit circle and so when sampled its stationarity is not always clear. Intuitively this also makes sense as the process will tend to drift away from the mean as it retains such a big contribution from the previous term. All this is to say that this is a process that is potentially ambiguous and serves as a good stress test for our tools.
 
 This gives motivation towards the logic and design of our experiment. We will compare the
 performance of the Phillips-Perron test across a high number of realizations of 
