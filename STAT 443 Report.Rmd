@@ -1,6 +1,6 @@
 ---
 title: "STAT 443 Report"
-author: "Chow Sheng Liang & Eric"
+author: "Chow Sheng Liang & Eric Li"
 date: "2025-07-20"
 output:
   pdf_document:
